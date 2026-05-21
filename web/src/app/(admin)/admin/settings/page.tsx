@@ -1,9 +1,7 @@
 "use client";
 
 import { CheckCircleOutlined, DeleteOutlined, FormatPainterOutlined, PlusOutlined, ReloadOutlined, SaveOutlined } from "@ant-design/icons";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { json } from "@codemirror/lang-json";
-import { tags } from "@lezer/highlight";
 import { App, Button, Card, Col, Drawer, Flex, Form, Input, InputNumber, Modal, Row, Segmented, Select, Space, Switch, Table, Tabs, Tag, Typography } from "antd";
 import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
@@ -14,27 +12,17 @@ import { useUserStore } from "@/stores/use-user-store";
 
 const CodeMirror = dynamic(() => import("@uiw/react-codemirror"), { ssr: false });
 const jsonEditorTheme = EditorView.theme({
-  "&": { backgroundColor: "var(--card)", color: "var(--foreground)" },
-  ".cm-content": { caretColor: "var(--foreground)", padding: "12px 0" },
+  "&": { backgroundColor: "var(--ant-color-bg-container)", color: "var(--ant-color-text)" },
+  ".cm-content": { caretColor: "var(--ant-color-text)", padding: "12px 0" },
   ".cm-line": { padding: "0 18px" },
-  ".cm-gutters": { backgroundColor: "color-mix(in srgb, var(--card) 94%, var(--foreground))", borderRight: "1px solid var(--border)", color: "var(--muted-foreground)" },
-  ".cm-activeLine": { backgroundColor: "color-mix(in srgb, var(--primary) 9%, transparent)" },
-  ".cm-activeLineGutter": { backgroundColor: "color-mix(in srgb, var(--primary) 10%, transparent)", color: "var(--foreground)" },
-  ".cm-cursor": { borderLeftColor: "var(--foreground)" },
-  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "color-mix(in srgb, var(--primary) 25%, transparent)" },
-  ".cm-foldPlaceholder": { backgroundColor: "var(--muted)", border: "1px solid var(--border)", color: "var(--muted-foreground)" },
+  ".cm-gutters": { backgroundColor: "var(--ant-color-fill-quaternary)", borderRight: "1px solid var(--ant-color-border)", color: "var(--ant-color-text-tertiary)" },
+  ".cm-activeLine": { backgroundColor: "var(--ant-color-fill-quaternary)" },
+  ".cm-activeLineGutter": { backgroundColor: "var(--ant-color-fill-quaternary)", color: "var(--ant-color-text)" },
+  ".cm-cursor": { borderLeftColor: "var(--ant-color-text)" },
+  ".cm-selectionBackground, &.cm-focused .cm-selectionBackground": { backgroundColor: "var(--ant-control-item-bg-active)" },
+  ".cm-foldPlaceholder": { backgroundColor: "var(--ant-color-fill-quaternary)", border: "1px solid var(--ant-color-border)", color: "var(--ant-color-text-tertiary)" },
   "&.cm-focused": { outline: "none" },
-}, { dark: true });
-const jsonHighlightStyle = HighlightStyle.define([
-  { tag: tags.propertyName, color: "#f2a7a7" },
-  { tag: tags.string, color: "#d6c6a8" },
-  { tag: tags.number, color: "#ddb27d" },
-  { tag: tags.bool, color: "#c5b3ff" },
-  { tag: tags.null, color: "#c5b3ff" },
-  { tag: tags.punctuation, color: "rgba(250, 250, 249, 0.62)" },
-  { tag: tags.squareBracket, color: "rgba(250, 250, 249, 0.62)" },
-  { tag: tags.brace, color: "rgba(250, 250, 249, 0.62)" },
-]);
+});
 
 const emptySettings: AdminSettings = {
   public: {
@@ -291,11 +279,10 @@ export default function AdminSettingsPage() {
                 <CodeMirror
                   value={activeJsonText}
                   height="520px"
-                  extensions={[json(), jsonEditorTheme, syntaxHighlighting(jsonHighlightStyle)]}
+                  extensions={[json(), jsonEditorTheme]}
                   basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: true, highlightActiveLineGutter: true }}
                   theme="none"
                   onChange={(value) => setJsonText((current) => ({ ...current, public: value }))}
-                  className="admin-json-editor"
                   style={{ fontSize: 13 }}
                 />
               </div>
@@ -341,11 +328,10 @@ export default function AdminSettingsPage() {
               <CodeMirror
                 value={activeJsonText}
                 height="520px"
-                extensions={[json(), jsonEditorTheme, syntaxHighlighting(jsonHighlightStyle)]}
+                extensions={[json(), jsonEditorTheme]}
                 basicSetup={{ foldGutter: true, lineNumbers: true, highlightActiveLine: true, highlightActiveLineGutter: true }}
                 theme="none"
                 onChange={(value) => setJsonText((current) => ({ ...current, private: value }))}
-                className="admin-json-editor"
                 style={{ fontSize: 13 }}
               />
             </div>
