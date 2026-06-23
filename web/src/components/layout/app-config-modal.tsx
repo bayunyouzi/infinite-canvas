@@ -1,7 +1,7 @@
 "use client";
 
 import { App, Button, Form, Input, Modal, Progress, Segmented, Select, Tabs } from "antd";
-import { CircleAlert, Cloud, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
+import { CircleAlert, Cloud, ExternalLink, Plus, RefreshCw, Trash2, Wifi } from "lucide-react";
 import { useState } from "react";
 
 import { ModelPicker } from "@/components/model-picker";
@@ -265,6 +265,13 @@ export function AppConfigModal() {
                                             { label: "Next.js 转发", value: "nextjs" },
                                         ]}
                                     />
+                                </Form.Item>
+                                <Form.Item label="柚子公益站" extra="访问公益站获取更多模型、API 和配置参考。" className="mb-4">
+                                    <a href="https://ai.bayunzi.shop" target="_blank" rel="noopener noreferrer">
+                                        <Button icon={<ExternalLink className="size-4" />}>
+                                            打开 ai.bayunzi.shop
+                                        </Button>
+                                    </a>
                                 </Form.Item>
                                 <div className="space-y-3">
                                     {config.channels.map((channel) => (

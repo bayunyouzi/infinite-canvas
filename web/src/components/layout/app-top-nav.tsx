@@ -1,6 +1,6 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { ExternalLink, Menu } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -69,6 +69,15 @@ export function AppTopNav() {
                         </div>
 
                         <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 justify-self-end whitespace-nowrap">
+                            <a
+                                href="https://ai.bayunzi.shop"
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="hidden h-8 items-center gap-1.5 rounded-md bg-stone-900 px-3 text-xs font-medium text-white transition hover:bg-stone-700 md:inline-flex dark:bg-stone-100 dark:text-stone-950 dark:hover:bg-white"
+                            >
+                                柚子公益站
+                                <ExternalLink className="size-3.5" />
+                            </a>
                             <UserStatusActions />
                         </div>
                     </div>
