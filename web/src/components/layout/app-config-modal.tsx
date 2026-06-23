@@ -121,7 +121,7 @@ export function AppConfigModal() {
         }
         setLoadingChannelId(channel.id);
         try {
-            const models = await fetchChannelModels(channel);
+            const models = await fetchChannelModels(channel, config.proxyMode);
             updateChannels(config.channels.map((item) => (item.id === channel.id ? { ...item, models } : item)));
             message.success(`${channel.name} 模型列表已更新`);
         } catch (error) {
@@ -139,7 +139,7 @@ export function AppConfigModal() {
         }
         setLoadingChannelId("all");
         try {
-            const entries = await Promise.all(runnable.map(async (channel) => [channel.id, await fetchChannelModels(channel)] as const));
+            const entries = await Promise.all(runnable.map(async (channel) => [channel.id, await fetchChannelModels(channel, config.proxyMode)] as const));
             const modelMap = new Map(entries);
             updateChannels(config.channels.map((channel) => (modelMap.has(channel.id) ? { ...channel, models: modelMap.get(channel.id) || [] } : channel)));
             message.success("模型列表已更新");
@@ -255,6 +255,17 @@ export function AppConfigModal() {
                                         </Button>
                                     </div>
                                 </div>
+                                <Form.Item label="连接方式" extra="部分中转接口（如 sub2api）不支持浏览器跨域请求，选择 Next.js 转发后所有 AI 请求会由当前站点服务端转发。" className="mb-4">
+                                    <Segmented
+                                        block
+                                        value={config.proxyMode}
+                                        onChange={(value) => updateConfig("proxyMode", value as AiConfig["proxyMode"])}
+                                        options={[
+                                            { label: "前端直连", value: "direct" },
+                                            { label: "Next.js 转发", value: "nextjs" },
+                                        ]}
+                                    />
+                                </Form.Item>
                                 <div className="space-y-3">
                                     {config.channels.map((channel) => (
                                         <section key={channel.id} className="rounded-lg border border-stone-200 p-3 dark:border-stone-800">

@@ -18,6 +18,7 @@ export type ModelChannel = {
 
 export type AiConfig = {
     channelMode: "remote" | "local";
+    proxyMode: "direct" | "nextjs";
     baseUrl: string;
     apiKey: string;
     apiFormat: ApiCallFormat;
@@ -64,6 +65,7 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
+    proxyMode: "direct",
     baseUrl: OPENAI_BASE_URL,
     apiKey: "",
     apiFormat: "openai",
@@ -212,6 +214,7 @@ export const useConfigStore = create<ConfigStore>()(
                     config: {
                         ...config,
                         channelMode: "local",
+                        proxyMode: config.proxyMode === "nextjs" ? "nextjs" : "direct",
                         apiFormat: normalizeApiFormat(config.apiFormat),
                         channels,
                         models,
@@ -370,7 +373,8 @@ function uniqueModelOptions(models: string[]) {
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)));
 }
 
-export function buildApiUrl(baseUrl: string, path: string) {
+export function buildApiUrl(baseUrl: string, path: string, proxyMode?: "direct" | "nextjs") {
+    if (proxyMode === "nextjs") return `/ai-proxy${path}`;
     let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
     normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();

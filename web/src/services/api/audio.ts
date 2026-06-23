@@ -7,13 +7,21 @@ import { buildApiUrl, resolveModelRequestConfig, type AiConfig } from "@/stores/
 type RequestOptions = { signal?: AbortSignal };
 
 function aiApiUrl(config: AiConfig, path: string) {
-    return buildApiUrl(config.baseUrl, path);
+    return buildApiUrl(config.baseUrl, path, config.proxyMode);
 }
 
-function aiHeaders(config: AiConfig) {
+function aiHeaders(config: AiConfig, contentType?: string) {
+    if (config.proxyMode === "nextjs") {
+        const headers: Record<string, string> = {
+            "x-ai-target": buildApiUrl(config.baseUrl, ""),
+            "x-ai-authorization": `Bearer ${config.apiKey}`,
+        };
+        if (contentType) headers["Content-Type"] = contentType;
+        return headers;
+    }
     return {
         Authorization: `Bearer ${config.apiKey}`,
-        "Content-Type": "application/json",
+        ...(contentType ? { "Content-Type": contentType } : {}),
     };
 }
 
@@ -35,7 +43,7 @@ export async function requestAudioGeneration(config: AiConfig, prompt: string, o
                 speed: Number(normalizeAudioSpeedValue(config.audioSpeed)),
                 ...(instructions ? { instructions } : {}),
             },
-            { headers: aiHeaders(requestConfig), responseType: "blob", signal: options?.signal },
+            { headers: aiHeaders(requestConfig, "application/json"), responseType: "blob", signal: options?.signal },
         );
         await assertAudioBlob(response.data);
         return response.data.type.startsWith("audio/") ? response.data : new Blob([response.data], { type: audioMimeType(format) });
