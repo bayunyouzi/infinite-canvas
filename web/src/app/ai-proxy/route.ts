@@ -6,6 +6,12 @@ export const dynamic = "force-dynamic";
 const AI_PROXY_TIMEOUT_MS = 120000;
 
 export async function GET(request: NextRequest) {
+    if (request.nextUrl.pathname === "/ai-proxy/health") {
+        return new Response(JSON.stringify({ ok: true, timestamp: new Date().toISOString() }), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+        });
+    }
     return proxyRequest(request, "GET");
 }
 
@@ -15,16 +21,18 @@ export async function POST(request: NextRequest) {
 
 async function proxyRequest(request: NextRequest, method: string) {
     const target = request.headers.get("x-ai-target") || "";
-    if (!target) return new Response("Missing x-ai-target", { status: 400 });
+    if (!target) {
+        return new Response(JSON.stringify({ error: "Missing x-ai-target header" }), { status: 400, headers: { "Content-Type": "application/json" } });
+    }
 
     let targetUrl: URL;
     try {
         targetUrl = new URL(target);
     } catch {
-        return new Response("Invalid x-ai-target", { status: 400 });
+        return new Response(JSON.stringify({ error: "Invalid x-ai-target header" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
     if (targetUrl.protocol !== "http:" && targetUrl.protocol !== "https:") {
-        return new Response("Unsupported AI target protocol", { status: 400 });
+        return new Response(JSON.stringify({ error: "Unsupported AI target protocol" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
 
     const path = request.nextUrl.pathname.replace(/^\/ai-proxy/, "");
@@ -51,9 +59,10 @@ async function proxyRequest(request: NextRequest, method: string) {
         });
     } catch (error) {
         if (error instanceof Error && error.name === "AbortError") {
-            return new Response("AI proxy timeout", { status: 504 });
+            return new Response(JSON.stringify({ error: "AI proxy timeout" }), { status: 504, headers: { "Content-Type": "application/json" } });
         }
-        return new Response(error instanceof Error ? error.message : "AI proxy error", { status: 502 });
+        const message = error instanceof Error ? error.message : "AI proxy error";
+        return new Response(JSON.stringify({ error: message }), { status: 502, headers: { "Content-Type": "application/json" } });
     } finally {
         clearTimeout(timer);
     }
