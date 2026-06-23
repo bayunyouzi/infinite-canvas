@@ -5,22 +5,23 @@ export const dynamic = "force-dynamic";
 
 const AI_PROXY_TIMEOUT_MS = 120000;
 
-export async function GET(request: NextRequest) {
-    if (request.nextUrl.pathname === "/ai-proxy/health") {
-        return new Response(JSON.stringify({ ok: true, timestamp: new Date().toISOString() }), {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
+    const target = request.headers.get("x-ai-target");
+    if (!target) {
+        return new Response(JSON.stringify({ ok: true, timestamp: new Date().toISOString(), mode: "ai-proxy" }), {
             status: 200,
             headers: { "Content-Type": "application/json" },
         });
     }
-    return proxyRequest(request, "GET");
+    return proxyRequest(request, "GET", target, (await params).path);
 }
 
-export async function POST(request: NextRequest) {
-    return proxyRequest(request, "POST");
-}
-
-async function proxyRequest(request: NextRequest, method: string) {
+export async function POST(request: NextRequest, { params }: { params: Promise<{ path?: string[] }> }) {
     const target = request.headers.get("x-ai-target") || "";
+    return proxyRequest(request, "POST", target, (await params).path);
+}
+
+async function proxyRequest(request: NextRequest, method: string, target: string, pathSegments?: string[]) {
     if (!target) {
         return new Response(JSON.stringify({ error: "Missing x-ai-target header" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
@@ -35,8 +36,8 @@ async function proxyRequest(request: NextRequest, method: string) {
         return new Response(JSON.stringify({ error: "Unsupported AI target protocol" }), { status: 400, headers: { "Content-Type": "application/json" } });
     }
 
-    const path = request.nextUrl.pathname.replace(/^\/ai-proxy/, "");
-    targetUrl.pathname = targetUrl.pathname.replace(/\/+$/, "") + path;
+    const suffix = pathSegments && pathSegments.length > 0 ? `/${pathSegments.join("/")}` : "";
+    targetUrl.pathname = targetUrl.pathname.replace(/\/+$/, "") + suffix;
     targetUrl.search = request.nextUrl.search;
 
     const headers = new Headers();
