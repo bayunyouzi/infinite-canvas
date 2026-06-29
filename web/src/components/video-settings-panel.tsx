@@ -10,6 +10,7 @@ import { modelOptionName, type AiConfig } from "@/stores/use-config-store";
 
 const resolutionOptions = [
     { value: "720", label: "720p" },
+    { value: "1080", label: "1080p" },
     { value: "480", label: "480p" },
 ];
 
@@ -22,7 +23,7 @@ const sizeOptions = [
     { value: "auto", label: "auto", width: 0, height: 0 },
 ];
 
-const secondOptions = [6, 10, 12, 16, 20];
+const secondOptions = [5, 10, 15];
 
 type VideoSettingsPanelProps = {
     config: AiConfig;
@@ -37,7 +38,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
         return <SeedanceVideoSettingsPanel config={config} onConfigChange={onConfigChange} theme={theme} showTitle={showTitle} className={className} />;
     }
 
-    const seconds = config.videoSeconds || "6";
+    const seconds = config.videoSeconds || "5";
     const size = normalizeVideoSizeValue(config.size);
     const dimensions = readSizeDimensions(size);
     const resolution = normalizeVideoResolutionValue(config.vquality);
@@ -94,7 +95,7 @@ export function VideoSettingsPanel({ config, onConfigChange, theme, showTitle = 
                                 {value}s
                             </OptionPill>
                         ))}
-                        <NumberInput value={seconds} min={1} max={20} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
+                        <NumberInput value={seconds} min={1} max={15} theme={theme} onChange={(value) => onConfigChange("videoSeconds", value)} />
                     </div>
                 </SettingGroup>
             </div>

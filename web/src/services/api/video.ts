@@ -298,8 +298,8 @@ function assertVideoConfig(config: AiConfig, model: string) {
 }
 
 function normalizeVideoSeconds(value: string) {
-    const seconds = Math.floor(Number(value) || 6);
-    return String(Math.max(1, Math.min(20, seconds)));
+    const seconds = Math.floor(Number(value) || 5);
+    return String(Math.max(1, Math.min(15, seconds)));
 }
 
 function normalizeVideoSize(value: string) {
@@ -317,7 +317,7 @@ function normalizeVideoResolution(value: string) {
 }
 
 function normalizeGrokVideoDuration(value: string) {
-    const seconds = Math.floor(Number(value) || 6);
+    const seconds = Math.floor(Number(value) || 5);
     return Math.max(1, Math.min(15, seconds));
 }
 
