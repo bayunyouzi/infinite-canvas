@@ -8,7 +8,13 @@ import { buildApiUrl, modelOptionName, resolveModelRequestConfig, type AiConfig 
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
 
-type VideoResponse = { id: string; status?: string; error?: { message?: string } };
+type VideoResponse = {
+    id?: string;
+    request_id?: string;
+    status?: string;
+    error?: { message?: string };
+    video?: { url?: string; duration?: number } | null;
+};
 type ApiVideoResponse = VideoResponse | { code?: number; data?: VideoResponse | null; msg?: string };
 type SeedanceTask = {
     id: string;
@@ -22,6 +28,16 @@ type RequestOptions = { signal?: AbortSignal };
 export type VideoGenerationResult = { blob?: Blob; url?: string; mimeType?: string };
 export type VideoGenerationTask = { id: string; provider: "openai" | "seedance"; model: string };
 export type VideoGenerationTaskState = { status: "pending" } | { status: "completed"; result: VideoGenerationResult } | { status: "failed"; error: string };
+
+const GROK_VIDEO_ASPECT_RATIOS = [
+    { value: "1:1", ratio: 1 },
+    { value: "16:9", ratio: 16 / 9 },
+    { value: "9:16", ratio: 9 / 16 },
+    { value: "4:3", ratio: 4 / 3 },
+    { value: "3:4", ratio: 3 / 4 },
+    { value: "3:2", ratio: 3 / 2 },
+    { value: "2:3", ratio: 2 / 3 },
+] as const;
 
 function aiApiUrl(config: AiConfig, path: string) {
     return buildApiUrl(config.baseUrl, path, config.proxyMode);
@@ -82,8 +98,12 @@ export async function storeGeneratedVideo(result: VideoGenerationResult): Promis
 }
 
 async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const resolvedModel = modelOptionName(model);
+    if (isGrokImagineVideo15Model(resolvedModel)) {
+        return createGrokImagineVideo15Task(config, model, resolvedModel, prompt, references, options);
+    }
     const body = new FormData();
-    body.append("model", modelOptionName(model));
+    body.append("model", resolvedModel);
     body.append("prompt", prompt);
     body.append("seconds", normalizeVideoSeconds(config.videoSeconds));
     if (normalizeVideoSize(config.size)) body.append("size", normalizeVideoSize(config.size)!);
@@ -93,8 +113,29 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
     files.forEach((file) => body.append("input_reference[]", file));
     try {
         const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos"), body, { headers: aiHeaders(config), signal: options?.signal })).data);
-        if (!created.id) throw new Error("视频接口没有返回任务 ID");
-        return { id: created.id, provider: "openai", model };
+        const taskId = created.id || created.request_id;
+        if (!taskId) throw new Error("视频接口没有返回任务 ID");
+        return { id: taskId, provider: "openai", model };
+    } catch (error) {
+        throw new Error(readAxiosError(error, "视频任务创建失败"));
+    }
+}
+
+async function createGrokImagineVideo15Task(config: AiConfig, rawModel: string, resolvedModel: string, prompt: string, references: ReferenceImage[], options?: RequestOptions): Promise<VideoGenerationTask> {
+    const reference = references[0];
+    if (!reference) throw new Error("grok-imagine-video-1.5 仅支持图生视频，请先上传 1 张参考图");
+    const payload = {
+        model: resolvedModel,
+        prompt,
+        image: await resolveGrokVideoImageInput(reference),
+        duration: normalizeGrokVideoDuration(config.videoSeconds),
+        aspect_ratio: normalizeGrokVideoAspectRatio(config.size),
+    };
+    try {
+        const created = unwrapVideoResponse((await axios.post<ApiVideoResponse>(aiApiUrl(config, "/videos/generations"), payload, { headers: aiHeaders(config, "application/json"), signal: options?.signal })).data);
+        const taskId = created.request_id || created.id;
+        if (!taskId) throw new Error("视频接口没有返回 request_id");
+        return { id: taskId, provider: "openai", model: rawModel };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务创建失败"));
     }
@@ -103,12 +144,17 @@ async function createOpenAIVideoTask(config: AiConfig, model: string, prompt: st
 async function pollOpenAIVideoTask(config: AiConfig, task: VideoGenerationTask, options?: RequestOptions): Promise<VideoGenerationTaskState> {
     try {
         const video = unwrapVideoResponse((await axios.get<ApiVideoResponse>(aiApiUrl(config, `/videos/${task.id}`), { headers: aiHeaders(config), signal: options?.signal })).data);
-        if (video.status === "completed") {
+        const status = normalizeOpenAIVideoStatus(video.status);
+        if (status === "completed") {
+            if (video.video?.url) return { status: "completed", result: await videoResultFromUrl(video.video.url, options) };
             const content = await axios.get<Blob>(aiApiUrl(config, `/videos/${task.id}/content`), { headers: aiHeaders(config), responseType: "blob", signal: options?.signal });
             await assertVideoBlob(content.data);
             return { status: "completed", result: { blob: content.data } };
         }
-        if (video.status === "failed" || video.status === "cancelled") return { status: "failed", error: video.error?.message || "视频生成失败" };
+        if (status === "failed") {
+            const errorMessage = video.error?.message || (String(video.status || "").toLowerCase() === "expired" ? "视频结果已过期，请重新生成" : "视频生成失败");
+            return { status: "failed", error: errorMessage };
+        }
         return { status: "pending" };
     } catch (error) {
         throw new Error(readAxiosError(error, "视频任务查询失败"));
@@ -225,6 +271,14 @@ async function resolveSeedanceAudioUrl(audio: ReferenceAudio) {
     return blobToDataUrl(blob);
 }
 
+async function resolveGrokVideoImageInput(image: ReferenceImage) {
+    const directUrl = image.url || image.dataUrl;
+    if (isPublicMediaUrl(directUrl)) return { url: directUrl };
+    const dataUrl = await imageToDataUrl(image);
+    if (!dataUrl) throw new Error("Grok 视频首帧图读取失败，请重新上传参考图");
+    return { url: dataUrl };
+}
+
 async function videoResultFromUrl(url: string, options?: RequestOptions): Promise<VideoGenerationResult> {
     try {
         const response = await axios.get<Blob>(url, { responseType: "blob", signal: options?.signal });
@@ -262,6 +316,45 @@ function normalizeVideoResolution(value: string) {
     return `${resolution}p`;
 }
 
+function normalizeGrokVideoDuration(value: string) {
+    const seconds = Math.floor(Number(value) || 6);
+    return Math.max(1, Math.min(15, seconds));
+}
+
+function normalizeGrokVideoAspectRatio(value: string) {
+    const normalized = String(value || "").trim();
+    if (!normalized || normalized === "auto" || normalized === "adaptive") return "16:9";
+    if (GROK_VIDEO_ASPECT_RATIOS.some((item) => item.value === normalized)) return normalized;
+    const dimensions = parseAspectDimensions(normalized);
+    if (!dimensions) return "16:9";
+    return closestGrokVideoAspectRatio(dimensions.width, dimensions.height);
+}
+
+function parseAspectDimensions(value: string) {
+    const sizeMatch = value.match(/^(\d+)x(\d+)$/i);
+    if (sizeMatch) return { width: Number(sizeMatch[1]), height: Number(sizeMatch[2]) };
+    const ratioMatch = value.match(/^(\d+):(\d+)$/);
+    if (ratioMatch) return { width: Number(ratioMatch[1]), height: Number(ratioMatch[2]) };
+    return null;
+}
+
+function closestGrokVideoAspectRatio(width: number, height: number) {
+    if (!(width > 0) || !(height > 0)) return "16:9";
+    const target = width / height;
+    return GROK_VIDEO_ASPECT_RATIOS.reduce((best, current) => (Math.abs(current.ratio - target) < Math.abs(best.ratio - target) ? current : best)).value;
+}
+
+function isGrokImagineVideo15Model(model: string) {
+    return /^grok-imagine-video-1\.5(?:-(720p|1080p))?$/i.test(model.trim());
+}
+
+function normalizeOpenAIVideoStatus(status?: string) {
+    const value = String(status || "").trim().toLowerCase();
+    if (["completed", "succeeded", "done"].includes(value)) return "completed" as const;
+    if (["failed", "cancelled", "canceled", "expired"].includes(value)) return "failed" as const;
+    return "pending" as const;
+}
+
 function unwrapVideoResponse(payload: ApiVideoResponse) {
     return unwrapEnvelope(payload, "接口没有返回视频任务");
 }
@@ -272,6 +365,7 @@ function unwrapSeedanceTask(payload: ApiEnvelope<SeedanceTask>) {
 
 function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
     if (!payload) throw new Error(emptyMessage);
+    if (typeof payload === "string") throw new Error(readTextPayloadError(payload, emptyMessage));
     if (typeof payload === "object" && "code" in payload && typeof payload.code === "number") {
         if (payload.code !== 0) throw new Error(payload.msg || "请求失败");
         if (!payload.data) throw new Error(emptyMessage);
@@ -282,8 +376,9 @@ function unwrapEnvelope<T>(payload: ApiEnvelope<T>, emptyMessage: string): T {
 
 function readAxiosError(error: unknown, fallback: string) {
     if (axios.isCancel(error)) return "请求已取消";
-    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number }>(error)) {
+    if (axios.isAxiosError<{ error?: { message?: string }; msg?: string; code?: number } | string>(error)) {
         const responseData = error.response?.data;
+        if (typeof responseData === "string") return readTextPayloadError(responseData, statusMessage(error.response?.status, fallback));
         return responseData?.msg || responseData?.error?.message || statusMessage(error.response?.status, fallback);
     }
     if (error instanceof DOMException && error.name === "AbortError") return "请求已取消";
@@ -292,8 +387,17 @@ function readAxiosError(error: unknown, fallback: string) {
 
 function statusMessage(status: number | undefined, fallback: string) {
     if (status === 401 || status === 403) return "鉴权失败，请检查 API Key、套餐权限或模型权限";
+    if (status === 404) return "当前渠道未开放视频生成接口，请确认 Base URL 是否对应视频网关，或切换到支持 /videos/generations 的渠道";
     if (status === 429) return "请求被限流或额度不足，请稍后重试";
     return status ? `${fallback}（${status}）` : fallback;
+}
+
+function readTextPayloadError(payload: string, fallback: string) {
+    const text = payload.trim();
+    if (!text) return fallback;
+    if (/^404 page not found$/i.test(text)) return "当前渠道未开放视频生成接口，请确认 Base URL 是否对应视频网关，或切换到支持 /videos/generations 的渠道";
+    if (/^<!doctype html/i.test(text) || /^<html/i.test(text)) return "当前 Base URL 返回的是站点页面，不是视频 API 接口，请改为实际的视频接口网关地址";
+    return text.length > 160 ? `${fallback}：${text.slice(0, 160)}...` : text;
 }
 
 async function assertVideoBlob(blob: Blob) {
