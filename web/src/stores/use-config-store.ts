@@ -377,8 +377,12 @@ export function buildApiUrl(baseUrl: string, path: string, proxyMode?: "direct" 
     if (proxyMode === "nextjs") return `/ai-proxy${path}`;
     let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
     normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
+    // 智能归一化：如果 baseUrl 路径中包含 /v1/xxx 等下游端点后缀，自动截断到 /v1
+    normalizedBaseUrl = normalizeBaseUrlToV1Root(normalizedBaseUrl);
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
-    const apiBaseUrl = lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3") ? normalizedBaseUrl : `${normalizedBaseUrl}/v1`;
+    const apiBaseUrl = (lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3"))
+        ? normalizedBaseUrl
+        : `${normalizedBaseUrl}/v1`;
     return `${apiBaseUrl}${path}`;
 }
 
@@ -395,6 +399,37 @@ function normalizeArkPlanBaseUrl(baseUrl: string) {
         url.search = "";
         url.hash = "";
         return url.toString().replace(/\/+$/, "");
+    } catch {
+        return baseUrl;
+    }
+}
+
+/**
+ * 智能归一化 baseUrl 到 /v1 或 /api/v3 的根路径。
+ * 例如 https://ai.xxx/v1/videos/generations → https://ai.xxx/v1
+ *      https://ai.xxx/api/v3/chat/completions → https://ai.xxx/api/v3
+ * 如果路径中没有已知 API 前缀，则原样返回。
+ */
+function normalizeBaseUrlToV1Root(baseUrl: string): string {
+    try {
+        const url = new URL(baseUrl);
+        const path = url.pathname.replace(/\/+$/, "");
+        const lowerPath = path.toLowerCase();
+        // 按优先级检测已知的 API 版本前缀
+        const prefixes = ["/api/plan/v3", "/api/v3", "/v1"];
+        for (const prefix of prefixes) {
+            const idx = lowerPath.indexOf(prefix);
+            if (idx < 0) continue;
+            const end = idx + prefix.length;
+            // 匹配到前缀且后面是 / 或者已到末尾
+            if (lowerPath.length === end || lowerPath[end] === "/") {
+                url.pathname = path.slice(0, end);
+                url.search = "";
+                url.hash = "";
+                return url.toString().replace(/\/+$/, "");
+            }
+        }
+        return baseUrl;
     } catch {
         return baseUrl;
     }
