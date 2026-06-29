@@ -256,10 +256,11 @@ export function useEffectiveConfig() {
 
 export function createModelChannel(channel?: Partial<ModelChannel>): ModelChannel {
     const apiFormat = normalizeApiFormat(channel?.apiFormat);
+    const rawBaseUrl = channel?.baseUrl?.trim();
     return {
         id: channel?.id?.trim() || nanoid(),
         name: channel?.name?.trim() || "新渠道",
-        baseUrl: channel?.baseUrl?.trim() || defaultBaseUrlForApiFormat(apiFormat),
+        baseUrl: sanitizeApiBaseUrl(rawBaseUrl || defaultBaseUrlForApiFormat(apiFormat)),
         apiKey: channel?.apiKey || "",
         apiFormat,
         models: uniqueRawModels(channel?.models || []),
@@ -375,10 +376,7 @@ function uniqueModelOptions(models: string[]) {
 
 export function buildApiUrl(baseUrl: string, path: string, proxyMode?: "direct" | "nextjs") {
     if (proxyMode === "nextjs") return `/ai-proxy${path}`;
-    let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
-    normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
-    // 智能归一化：如果 baseUrl 路径中包含 /v1/xxx 等下游端点后缀，自动截断到 /v1
-    normalizedBaseUrl = normalizeBaseUrlToV1Root(normalizedBaseUrl);
+    const normalizedBaseUrl = sanitizeApiBaseUrl(baseUrl);
     const lowerBaseUrl = normalizedBaseUrl.toLowerCase();
     const apiBaseUrl = (lowerBaseUrl.endsWith("/v1") || lowerBaseUrl.endsWith("/api/v3") || lowerBaseUrl.endsWith("/api/plan/v3"))
         ? normalizedBaseUrl
@@ -404,24 +402,29 @@ function normalizeArkPlanBaseUrl(baseUrl: string) {
     }
 }
 
+export function sanitizeApiBaseUrl(baseUrl: string): string {
+    let normalizedBaseUrl = baseUrl.trim().replace(/\/+$/, "");
+    normalizedBaseUrl = normalizeArkPlanBaseUrl(normalizedBaseUrl);
+    normalizedBaseUrl = normalizeBaseUrlToApiRoot(normalizedBaseUrl);
+    return normalizedBaseUrl;
+}
+
 /**
  * 智能归一化 baseUrl 到 /v1 或 /api/v3 的根路径。
  * 例如 https://ai.xxx/v1/videos/generations → https://ai.xxx/v1
  *      https://ai.xxx/api/v3/chat/completions → https://ai.xxx/api/v3
  * 如果路径中没有已知 API 前缀，则原样返回。
  */
-function normalizeBaseUrlToV1Root(baseUrl: string): string {
+function normalizeBaseUrlToApiRoot(baseUrl: string): string {
     try {
         const url = new URL(baseUrl);
         const path = url.pathname.replace(/\/+$/, "");
         const lowerPath = path.toLowerCase();
-        // 按优先级检测已知的 API 版本前缀
         const prefixes = ["/api/plan/v3", "/api/v3", "/v1"];
         for (const prefix of prefixes) {
             const idx = lowerPath.indexOf(prefix);
             if (idx < 0) continue;
             const end = idx + prefix.length;
-            // 匹配到前缀且后面是 / 或者已到末尾
             if (lowerPath.length === end || lowerPath[end] === "/") {
                 url.pathname = path.slice(0, end);
                 url.search = "";

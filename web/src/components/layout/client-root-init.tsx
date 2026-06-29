@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { useEffect, useRef } from "react";
 import { App } from "antd";
 
-import { createModelChannel, useConfigStore } from "@/stores/use-config-store";
+import { createModelChannel, sanitizeApiBaseUrl, useConfigStore } from "@/stores/use-config-store";
 
 export function ClientRootInit({ children }: { children: ReactNode }) {
     const { message } = App.useApp();
@@ -25,6 +25,7 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
         searchParams.delete("apiKey");
         searchParams.delete("apikey");
         window.history.replaceState(null, "", `${window.location.pathname}${searchParams.size ? `?${searchParams}` : ""}${window.location.hash}`);
+        const normalizedBaseUrl = baseUrl ? sanitizeApiBaseUrl(baseUrl) : "";
         const firstChannel = config.channels[0];
         updateConfig(
             "channels",
@@ -33,14 +34,14 @@ export function ClientRootInit({ children }: { children: ReactNode }) {
                       index === 0
                           ? {
                                 ...channel,
-                                ...(baseUrl ? { baseUrl } : {}),
+                                ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
                                 ...(apiKey ? { apiKey } : {}),
                             }
                           : channel,
                   )
-                : [createModelChannel({ id: "default", name: "默认渠道", baseUrl: baseUrl || undefined, apiKey: apiKey || "" })],
+                : [createModelChannel({ id: "default", name: "默认渠道", baseUrl: normalizedBaseUrl || undefined, apiKey: apiKey || "" })],
         );
-        if (baseUrl) updateConfig("baseUrl", baseUrl);
+        if (normalizedBaseUrl) updateConfig("baseUrl", normalizedBaseUrl);
         if (apiKey) updateConfig("apiKey", apiKey);
         openConfigDialog(false);
         message.success("已导入本地直连配置");
