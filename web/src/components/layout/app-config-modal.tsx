@@ -337,7 +337,7 @@ export function AppConfigModal() {
                                                 maxTagCount="responsive"
                                                 placeholder={config.models.length ? `请选择或输入${group.optionsLabel}` : "先到渠道里填写或拉取模型"}
                                                 value={config[group.modelsKey]}
-                                                options={modelOptions.filter((option) => filterModelsByCapability([option.value], group.capability).length > 0)}
+                                                options={optionsForModelGroup(modelOptions, group)}
                                                 onChange={(models) => updateCapabilityModels(group, models)}
                                             />
                                         </Form.Item>
@@ -502,6 +502,10 @@ function uniqueModels(models: string[]) {
 
 function apiFormatLabel(apiFormat: ApiCallFormat) {
     return apiFormat === "gemini" ? "Gemini" : "OpenAI";
+}
+
+function optionsForModelGroup(modelOptions: Array<{ label: string; value: string }>, group: ModelGroup) {
+    return group.capability === "image" ? modelOptions : modelOptions.filter((option) => filterModelsByCapability([option.value], group.capability).length > 0);
 }
 
 function formatWebdavTime(value: string) {
