@@ -2,7 +2,7 @@
 
 import { ArrowLeft, ArrowRight, BookOpen, CheckSquare, ClipboardPaste, Download, FolderPlus, History, ImagePlus, LoaderCircle, PenLine, Plus, SlidersHorizontal, Sparkles, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Tag, Tooltip, Typography } from "antd";
+import { App, Button, Checkbox, Drawer, Empty, Image, Input, Modal, Switch, Tag, Tooltip, Typography } from "antd";
 import localforage from "localforage";
 import { saveAs } from "file-saver";
 
@@ -12,11 +12,11 @@ import { PromptSelectDialog } from "@/components/prompts/prompt-select-dialog";
 import { AssetPickerModal, type InsertAssetPayload } from "@/app/(user)/canvas/components/asset-picker-modal";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
-import { modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
+import { BUILTIN_IMAGE_API_KEY, BUILTIN_IMAGE_BASE_URL, createModelChannel, encodeChannelModel, modelOptionLabel, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { nanoid } from "nanoid";
 import { formatBytes, formatDuration, getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
-import { requestEdit, requestGeneration } from "@/services/api/image";
+import { requestEdit, requestGeneration, requestImageQuestion, type AiTextMessage } from "@/services/api/image";
 import { deleteStoredImages, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { ReferenceImage } from "@/types/image";
@@ -65,6 +65,16 @@ type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => 
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
+const RANDOM_PROMPT_MODEL = "grok-4.3-fast";
+const RANDOM_PROMPT_CHANNEL_ID = "builtin-random-prompt";
+const RANDOM_PROMPT_CHANNEL = createModelChannel({
+    id: RANDOM_PROMPT_CHANNEL_ID,
+    name: "随机提示词",
+    baseUrl: BUILTIN_IMAGE_BASE_URL,
+    apiKey: BUILTIN_IMAGE_API_KEY,
+    apiFormat: "openai",
+    models: [RANDOM_PROMPT_MODEL],
+});
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
 export default function ImagePage() {
@@ -85,6 +95,8 @@ export default function ImagePage() {
     const [settingsOpen, setSettingsOpen] = useState(false);
     const [promptDialogOpen, setPromptDialogOpen] = useState(false);
     const [assetPickerOpen, setAssetPickerOpen] = useState(false);
+    const [randomPromptLoading, setRandomPromptLoading] = useState(false);
+    const [animeStyle, setAnimeStyle] = useState(false);
     const [startedAt, setStartedAt] = useState(0);
     const [elapsedMs, setElapsedMs] = useState(0);
     const [selectedLogIds, setSelectedLogIds] = useState<string[]>([]);
@@ -134,6 +146,45 @@ export default function ImagePage() {
             message.success(`已读取 ${nextReferences.length} 张参考图`);
         } catch {
             message.error("剪切板里没有可读取的图片");
+        }
+    };
+
+    const generateRandomPrompt = async () => {
+        setRandomPromptLoading(true);
+        try {
+            const promptConfig: AiConfig = {
+                ...effectiveConfig,
+                channels: [...effectiveConfig.channels, RANDOM_PROMPT_CHANNEL],
+                model: encodeChannelModel(RANDOM_PROMPT_CHANNEL_ID, RANDOM_PROMPT_MODEL),
+                textModel: encodeChannelModel(RANDOM_PROMPT_CHANNEL_ID, RANDOM_PROMPT_MODEL),
+            };
+            const messages: AiTextMessage[] = [
+                {
+                    role: "system",
+                    content: [
+                        { type: "text", text: "你是专业的生图提示词策划助手。请只输出 1 条可直接用于文生图的最终提示词，不要加标题、解释、编号、引号或安全说明。" },
+                        { type: "text", text: "人物必须是成年女性，气质自然，画面审美高级，不得包含未成年人设定、校园未成年暗示、裸体、性行为、挑逗描写、敏感部位强调或任何露骨内容。" },
+                        { type: "text", text: animeStyle ? "输出二次元插画风格提示词，强调日系动画审美、干净线条、精致上色和角色设计。" : "输出偏写实或半写实风格提示词，强调摄影感、光线、镜头、服装、环境和细节。" },
+                        { type: "text", text: "提示词请聚焦成年美少女/年轻女性主题，默认全身或半身构图，服装完整得体，适合直接用于安全生图。尽量具体，包含主体、发型、服饰、场景、构图、镜头、光线、色彩和质感。" },
+                    ],
+                },
+                {
+                    role: "user",
+                    content: "请随机生成 1 条高质量、安全、可直接用于生图的成年女性提示词。",
+                },
+            ];
+            let nextPrompt = "";
+            const answer = await requestImageQuestion(promptConfig, messages, (text) => {
+                nextPrompt += text;
+            });
+            const finalPrompt = (nextPrompt || answer || "").trim();
+            if (!finalPrompt) throw new Error("随机提示词生成失败");
+            setPrompt(finalPrompt);
+            message.success("已填入随机提示词");
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : "随机提示词生成失败");
+        } finally {
+            setRandomPromptLoading(false);
         }
     };
 
@@ -341,9 +392,16 @@ export default function ImagePage() {
 
                         <div className="mt-6 space-y-5">
                             <div>
-                                <div className="mb-2 flex items-center justify-between gap-3">
+                                <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
                                     <span className="text-base font-semibold">提示词</span>
-                                    <div className="flex gap-2">
+                                    <div className="flex flex-wrap items-center gap-3 text-sm">
+                                        <label className="flex items-center gap-2 text-stone-600 dark:text-stone-300">
+                                            <span>二次元</span>
+                                            <Switch size="small" checked={animeStyle} onChange={setAnimeStyle} />
+                                        </label>
+                                        <Button size="small" icon={<Sparkles className="size-3.5" />} loading={randomPromptLoading} onClick={() => void generateRandomPrompt()}>
+                                            随机提示词
+                                        </Button>
                                         <Button size="small" icon={<BookOpen className="size-3.5" />} onClick={() => setPromptDialogOpen(true)}>
                                             查看提示词库
                                         </Button>

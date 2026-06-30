@@ -28,7 +28,6 @@ type WebdavDomainProgress = {
 };
 
 const modelGroups: ModelGroup[] = [
-    { capability: "image", modelKey: "imageModel", modelsKey: "imageModels", defaultLabel: "默认生图模型", optionsLabel: "生图模型可选项" },
     { capability: "video", modelKey: "videoModel", modelsKey: "videoModels", defaultLabel: "默认视频模型", optionsLabel: "视频模型可选项" },
     { capability: "text", modelKey: "textModel", modelsKey: "textModels", defaultLabel: "默认文本模型", optionsLabel: "文本模型可选项" },
     { capability: "audio", modelKey: "audioModel", modelsKey: "audioModels", defaultLabel: "默认音频模型", optionsLabel: "音频模型可选项" },
@@ -337,7 +336,7 @@ export function AppConfigModal() {
                                                 maxTagCount="responsive"
                                                 placeholder={config.models.length ? `请选择或输入${group.optionsLabel}` : "先到渠道里填写或拉取模型"}
                                                 value={config[group.modelsKey]}
-                                                options={modelOptions}
+                                                options={modelOptions.filter((option) => filterModelsByCapability([option.value], group.capability).length > 0)}
                                                 onChange={(models) => updateCapabilityModels(group, models)}
                                             />
                                         </Form.Item>

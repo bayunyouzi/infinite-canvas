@@ -62,6 +62,19 @@ export type ModelCapability = "image" | "video" | "text" | "audio";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
+export const BUILTIN_IMAGE_CHANNEL_ID = "builtin-image";
+export const BUILTIN_IMAGE_MODEL = "grok-imagine-image-lite";
+export const BUILTIN_IMAGE_BASE_URL = "http://124.156.219.145:8000";
+export const BUILTIN_IMAGE_API_KEY = "sk-81d50823c3e2422e3878064c79dc533528e3b0d002e1fbde824b14f453ebd98b";
+const LEGACY_DEFAULT_IMAGE_MODEL = "gpt-image-2";
+const BUILTIN_IMAGE_CHANNEL: ModelChannel = {
+    id: BUILTIN_IMAGE_CHANNEL_ID,
+    name: "默认生图",
+    baseUrl: sanitizeApiBaseUrl(BUILTIN_IMAGE_BASE_URL),
+    apiKey: BUILTIN_IMAGE_API_KEY,
+    apiFormat: "openai",
+    models: [BUILTIN_IMAGE_MODEL],
+};
 
 export const defaultConfig: AiConfig = {
     channelMode: "local",
@@ -76,11 +89,11 @@ export const defaultConfig: AiConfig = {
             baseUrl: OPENAI_BASE_URL,
             apiKey: "",
             apiFormat: "openai",
-            models: ["gpt-image-2", "grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
+            models: ["grok-imagine-video", "gpt-5.5", "gpt-4o-mini-tts"],
         },
     ],
-    model: "default::gpt-image-2",
-    imageModel: "default::gpt-image-2",
+    model: encodeChannelModel(BUILTIN_IMAGE_CHANNEL_ID, BUILTIN_IMAGE_MODEL),
+    imageModel: encodeChannelModel(BUILTIN_IMAGE_CHANNEL_ID, BUILTIN_IMAGE_MODEL),
     videoModel: "default::grok-imagine-video",
     textModel: "default::gpt-5.5",
     audioModel: "default::gpt-4o-mini-tts",
@@ -93,8 +106,8 @@ export const defaultConfig: AiConfig = {
     videoGenerateAudio: "true",
     videoWatermark: "false",
     systemPrompt: "",
-    models: ["default::gpt-image-2", "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
-    imageModels: ["default::gpt-image-2"],
+    models: [encodeChannelModel(BUILTIN_IMAGE_CHANNEL_ID, BUILTIN_IMAGE_MODEL), "default::grok-imagine-video", "default::gpt-5.5", "default::gpt-4o-mini-tts"],
+    imageModels: [encodeChannelModel(BUILTIN_IMAGE_CHANNEL_ID, BUILTIN_IMAGE_MODEL)],
     videoModels: ["default::grok-imagine-video"],
     textModels: ["default::gpt-5.5"],
     audioModels: ["default::gpt-4o-mini-tts"],
@@ -133,7 +146,7 @@ function isVideoModelName(model: string) {
 
 function isImageModelName(model: string) {
     const value = modelOptionName(model).toLowerCase();
-    return !isVideoModelName(model) && !isAudioModelName(model) && (value.includes("seedream") || value.includes("gpt-image") || value.includes("image") || value.includes("dall-e") || value.includes("dalle") || value.includes("imagen") || value.includes("flux") || value.includes("sdxl") || value.includes("stable-diffusion") || value.includes("midjourney"));
+    return !isVideoModelName(model) && !isAudioModelName(model) && (value.includes("seedream") || value.includes("gpt-image") || value.includes("grok-imagine-image") || value.includes("image") || value.includes("dall-e") || value.includes("dalle") || value.includes("imagen") || value.includes("flux") || value.includes("sdxl") || value.includes("stable-diffusion") || value.includes("midjourney"));
 }
 
 function isAudioModelName(model: string) {
@@ -243,7 +256,7 @@ export const useConfigStore = create<ConfigStore>()(
 );
 
 function normalizeModelList(models: string[], channels: ModelChannel[]) {
-    const allModelOptions = channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model)));
+    const allModelOptions = allModelOptionsFromChannels(channels);
     return Array.from(new Set((models || []).map((model) => model.trim()).filter(Boolean)))
         .map((model) => normalizeModelOptionValue(model, channels))
         .filter((model) => !allModelOptions.length || allModelOptions.includes(model) || !isChannelModelValue(model));
@@ -293,13 +306,20 @@ export function modelOptionLabel(config: AiConfig, value: string) {
 }
 
 export function modelOptionsFromChannels(channels: ModelChannel[]) {
-    return uniqueModelOptions(channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model))));
+    return uniqueModelOptions(allModelOptionsFromChannels(channels));
+}
+
+function allModelOptionsFromChannels(channels: ModelChannel[]) {
+    return [...channels.flatMap((channel) => channel.models.map((model) => encodeChannelModel(channel.id, model))), encodeChannelModel(BUILTIN_IMAGE_CHANNEL_ID, BUILTIN_IMAGE_MODEL)];
 }
 
 export function normalizeModelOptionValue(value: string | undefined, channels: ModelChannel[]) {
     const model = (value || "").trim();
     if (!model) return "";
     const decoded = decodeChannelModel(model);
+    if ((decoded?.channelId === BUILTIN_IMAGE_CHANNEL_ID && decoded.model === BUILTIN_IMAGE_MODEL) || model === BUILTIN_IMAGE_MODEL || decoded?.model === LEGACY_DEFAULT_IMAGE_MODEL || model === LEGACY_DEFAULT_IMAGE_MODEL) {
+        return encodeChannelModel(BUILTIN_IMAGE_CHANNEL_ID, BUILTIN_IMAGE_MODEL);
+    }
     if (decoded) {
         const channel = channels.find((item) => item.id === decoded.channelId);
         return channel && channel.models.includes(decoded.model) ? model : "";
@@ -311,6 +331,9 @@ export function normalizeModelOptionValue(value: string | undefined, channels: M
 export function resolveModelChannel(config: AiConfig, value: string) {
     const decoded = decodeChannelModel(value);
     const model = decoded?.model || value;
+    if ((decoded?.channelId === BUILTIN_IMAGE_CHANNEL_ID && decoded.model === BUILTIN_IMAGE_MODEL) || model === BUILTIN_IMAGE_MODEL || decoded?.model === LEGACY_DEFAULT_IMAGE_MODEL || model === LEGACY_DEFAULT_IMAGE_MODEL) {
+        return BUILTIN_IMAGE_CHANNEL;
+    }
     const matched = decoded ? config.channels.find((channel) => channel.id === decoded.channelId) : config.channels.find((channel) => channel.models.includes(model));
     return matched || config.channels[0] || createModelChannel({ id: "default", name: "默认渠道", baseUrl: config.baseUrl, apiKey: config.apiKey, apiFormat: config.apiFormat, models: config.models.map(modelOptionName) });
 }
@@ -328,14 +351,16 @@ export function resolveModelRequestConfig(config: AiConfig, value: string) {
 
 function normalizeChannels(config: AiConfig) {
     const persistedChannels = Array.isArray(config.channels) ? config.channels : [];
-    const channels = persistedChannels.map((channel, index) =>
-        createModelChannel({
-            ...channel,
-            id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
-            name: channel.name || (index === 0 ? "默认渠道" : `渠道 ${index + 1}`),
-            models: uniqueRawModels(channel.models || []),
-        }),
-    );
+    const channels = persistedChannels
+        .filter((channel) => channel.id !== BUILTIN_IMAGE_CHANNEL_ID)
+        .map((channel, index) =>
+            createModelChannel({
+                ...channel,
+                id: channel.id || (index === 0 ? "default" : `channel-${index + 1}`),
+                name: channel.name || (index === 0 ? "默认渠道" : `渠道 ${index + 1}`),
+                models: uniqueRawModels((channel.models || []).filter((model) => model !== BUILTIN_IMAGE_MODEL && model !== LEGACY_DEFAULT_IMAGE_MODEL)),
+            }),
+        );
     if (!channels.length) {
         channels.push(
             createModelChannel({
@@ -347,11 +372,10 @@ function normalizeChannels(config: AiConfig) {
                 models: uniqueRawModels([
                     ...(config.models || []),
                     config.model,
-                    config.imageModel,
                     config.videoModel,
                     config.textModel,
                     config.audioModel,
-                ]),
+                ].filter((model) => modelOptionName(model) !== BUILTIN_IMAGE_MODEL && modelOptionName(model) !== LEGACY_DEFAULT_IMAGE_MODEL)),
             }),
         );
     }
@@ -367,7 +391,7 @@ function normalizeApiFormat(apiFormat: unknown): ApiCallFormat {
 }
 
 function uniqueRawModels(models: string[]) {
-    return Array.from(new Set((models || []).map((model) => modelOptionName(model).trim()).filter(Boolean)));
+    return Array.from(new Set((models || []).map((model) => modelOptionName(model).trim()).filter((model) => Boolean(model) && model !== BUILTIN_IMAGE_MODEL && model !== LEGACY_DEFAULT_IMAGE_MODEL)));
 }
 
 function uniqueModelOptions(models: string[]) {
