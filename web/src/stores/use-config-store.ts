@@ -66,7 +66,7 @@ export const BUILTIN_IMAGE_CHANNEL_ID = "builtin-image";
 export const BUILTIN_IMAGE_MODEL = "grok-imagine-image-lite";
 export const BUILTIN_IMAGE_BASE_URL = "http://124.156.219.145:8000";
 export const BUILTIN_IMAGE_API_KEY = "sk-81d50823c3e2422e3878064c79dc533528e3b0d002e1fbde824b14f453ebd98b";
-const LEGACY_DEFAULT_IMAGE_MODEL = "gpt-image-2";
+const LEGACY_DEFAULT_IMAGE_MODEL = ""; // gpt-image-2 不再作为黑名单，允许用户在自己渠道使用
 const BUILTIN_IMAGE_CHANNEL: ModelChannel = {
     id: BUILTIN_IMAGE_CHANNEL_ID,
     name: "默认生图",
