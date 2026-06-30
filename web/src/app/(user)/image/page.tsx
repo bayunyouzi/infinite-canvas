@@ -205,9 +205,9 @@ export default function ImagePage() {
             ];
             let streamed = "";
             const answer = await requestImageQuestion(promptConfig, messages, (text) => {
-                streamed += text;
+                streamed = text;
             });
-            const finalPrompt = normalizeRandomPromptText(streamed || answer || "");
+            const finalPrompt = normalizeRandomPromptText(answer || streamed || "");
             if (!finalPrompt) throw new Error("随机提示词生成失败");
             setPrompt(finalPrompt);
             message.success("已填入随机提示词");
