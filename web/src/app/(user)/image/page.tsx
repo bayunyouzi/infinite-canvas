@@ -34,9 +34,11 @@ type GeneratedImage = {
 
 type GenerationResult = {
     id: string;
-    status: "pending" | "success" | "failed";
+    status: "pending" | "success" | "failed" | "stopped";
     image?: GeneratedImage;
     error?: string;
+    retryCount: number;
+    isRetrying?: boolean;
 };
 
 type GenerationLog = {
@@ -65,8 +67,9 @@ type UpdateAiConfig = <K extends keyof AiConfig>(key: K, value: AiConfig[K]) => 
 
 const LOG_STORE_KEY = "infinite-canvas:image_generation_logs";
 const RESULT_ACTION_BUTTON_CLASS = "min-w-0 px-1.5 [&_.ant-btn-icon]:shrink-0 [&>span:last-child]:min-w-0 [&>span:last-child]:truncate";
-const RANDOM_PROMPT_MODEL = "grok-4.3-fast";
+const RANDOM_PROMPT_MODEL = "grok-4.20-0309-non-reasoning";
 const RANDOM_PROMPT_CHANNEL_ID = "builtin-random-prompt";
+const RANDOM_PROMPT_RETRY_DELAY_MS = 1200;
 const RANDOM_PROMPT_CHANNEL = createModelChannel({
     id: RANDOM_PROMPT_CHANNEL_ID,
     name: "随机提示词",
@@ -77,9 +80,35 @@ const RANDOM_PROMPT_CHANNEL = createModelChannel({
 });
 const logStore = localforage.createInstance({ name: "infinite-canvas", storeName: "image_generation_logs" });
 
+function sleep(ms: number) {
+    return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function normalizeRandomPromptText(text: string) {
+    const compact = text
+        .replace(/\r/g, "")
+        .replace(/[\t ]+/g, " ")
+        .replace(/\n{2,}/g, "\n")
+        .trim();
+    if (!compact) return "";
+    const lines = compact
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((line) => !/^(提示词|prompt|final prompt|最终提示词)[:：]?$/i.test(line));
+    const joined = lines.join(", ");
+    return joined.replace(/^['"“”‘’]+|['"“”‘’]+$/g, "").trim();
+}
+
+function isRetryableGenerationError(error: unknown) {
+    const message = error instanceof Error ? error.message : String(error || "");
+    return /internal server error|接口没有返回图片|请求失败：500|请求失败：502|请求失败：503|请求失败：504/i.test(message);
+}
+
 export default function ImagePage() {
     const { message } = App.useApp();
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const stoppedResultIdsRef = useRef(new Set<string>());
     const config = useConfigStore((state) => state.config);
     const effectiveConfig = useEffectiveConfig();
     const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -162,22 +191,23 @@ export default function ImagePage() {
                 {
                     role: "system",
                     content: [
-                        { type: "text", text: "你是专业的生图提示词策划助手。请只输出 1 条可直接用于文生图的最终提示词，不要加标题、解释、编号、引号或安全说明。" },
+                        { type: "text", text: "你是专业的生图提示词策划助手。你的唯一任务是返回一行可直接用于文生图的英文提示词。" },
+                        { type: "text", text: "严禁输出思考过程、解释、分步草稿、重复片段、前缀累积文本、标题、编号、引号、备注、换行或任何非提示词内容。" },
                         { type: "text", text: "人物必须是成年女性，气质自然，画面审美高级，不得包含未成年人设定、校园未成年暗示、裸体、性行为、挑逗描写、敏感部位强调或任何露骨内容。" },
-                        { type: "text", text: animeStyle ? "输出二次元插画风格提示词，强调日系动画审美、干净线条、精致上色和角色设计。" : "输出偏写实或半写实风格提示词，强调摄影感、光线、镜头、服装、环境和细节。" },
-                        { type: "text", text: "提示词请聚焦成年美少女/年轻女性主题，默认全身或半身构图，服装完整得体，适合直接用于安全生图。尽量具体，包含主体、发型、服饰、场景、构图、镜头、光线、色彩和质感。" },
+                        { type: "text", text: animeStyle ? "输出二次元插画风格提示词，强调日系动画审美、干净线条、精致上色、角色设计、完整服装与高级构图。" : "输出偏写实或半写实风格提示词，强调摄影感、镜头语言、自然光线、服装层次、环境细节与高级质感。" },
+                        { type: "text", text: "提示词必须始终围绕美少女主题来写，明确包含五个方面：画面主体、风格、构图、光线和用途。默认全身或半身构图，服装完整得体，信息密度高但表达紧凑。直接输出最终英文 prompt。" },
                     ],
                 },
                 {
                     role: "user",
-                    content: "请随机生成 1 条高质量、安全、可直接用于生图的成年女性提示词。",
+                    content: "Generate one final English image prompt only.",
                 },
             ];
-            let nextPrompt = "";
+            let streamed = "";
             const answer = await requestImageQuestion(promptConfig, messages, (text) => {
-                nextPrompt += text;
+                streamed += text;
             });
-            const finalPrompt = (nextPrompt || answer || "").trim();
+            const finalPrompt = normalizeRandomPromptText(streamed || answer || "");
             if (!finalPrompt) throw new Error("随机提示词生成失败");
             setPrompt(finalPrompt);
             message.success("已填入随机提示词");
@@ -206,11 +236,13 @@ export default function ImagePage() {
         setElapsedMs(0);
         setRunning(true);
         setPreviewLog(null);
-        setResults(Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" })));
+        const nextResults = Array.from({ length: generationCount }, () => ({ id: nanoid(), status: "pending" as const, retryCount: 0, isRetrying: false }));
+        stoppedResultIdsRef.current = new Set();
+        setResults(nextResults);
         const batchStartedAt = performance.now();
         setStartedAt(batchStartedAt);
 
-        const tasks = Array.from({ length: generationCount }, (_, index) => runGenerationSlot(index, snapshot));
+        const tasks = nextResults.map((result, index) => runGenerationSlot(index, snapshot, result.id));
 
         const result = await Promise.allSettled(tasks);
         const successImages = result.filter((item): item is PromiseFulfilledResult<GeneratedImage> => item.status === "fulfilled").map((item) => item.value);
@@ -283,6 +315,7 @@ export default function ImagePage() {
     const createSession = () => {
         setPrompt("");
         setReferences([]);
+        stoppedResultIdsRef.current = new Set();
         setResults([]);
         setElapsedMs(0);
         setStartedAt(0);
@@ -316,7 +349,8 @@ export default function ImagePage() {
         if (log.config.quality) updateConfig("quality", log.config.quality);
         if (log.config.size) updateConfig("size", log.config.size);
         if (log.config.count) updateConfig("count", log.config.count);
-        setResults(log.images.map((image) => ({ id: image.id, status: "success", image })));
+        stoppedResultIdsRef.current = new Set();
+        setResults(log.images.map((image) => ({ id: image.id, status: "success", image, retryCount: 0, isRetrying: false })));
     };
 
     const buildRequestSnapshot = () => {
@@ -333,28 +367,58 @@ export default function ImagePage() {
         return { text, config: { ...effectiveConfig, model, count: "1" }, references: [...references] };
     };
 
-    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }) => {
+    const runGenerationSlot = async (index: number, snapshot: { text: string; config: AiConfig; references: ReferenceImage[] }, resultId: string) => {
         const itemStartedAt = performance.now();
-        try {
-            const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
-            const image = result[0];
-            if (!image) throw new Error("接口没有返回图片");
-            const meta = await readImageMeta(image.dataUrl);
-            const nextImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl) };
-            setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage }));
-            return nextImage;
-        } catch (error) {
-            setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : "生成失败" }));
-            throw error;
+        let attempt = 0;
+        for (;;) {
+            if (stoppedResultIdsRef.current.has(resultId)) {
+                const stoppedError = new Error("已手动停止重试");
+                setResults((value) => updateResultAt(value, index, { status: "stopped", error: stoppedError.message, isRetrying: false }));
+                throw stoppedError;
+            }
+            try {
+                const result = snapshot.references.length ? await requestEdit(snapshot.config, snapshot.text, snapshot.references) : await requestGeneration(snapshot.config, snapshot.text);
+                const image = result[0];
+                if (!image) throw new Error("接口没有返回图片");
+                const meta = await readImageMeta(image.dataUrl);
+                const nextImage = { id: image.id, dataUrl: image.dataUrl, durationMs: performance.now() - itemStartedAt, width: meta.width, height: meta.height, bytes: getDataUrlByteSize(image.dataUrl) };
+                setResults((value) => updateResultAt(value, index, { status: "success", image: nextImage, error: undefined, retryCount: attempt, isRetrying: false }));
+                return nextImage;
+            } catch (error) {
+                if (stoppedResultIdsRef.current.has(resultId)) {
+                    const stoppedError = new Error("已手动停止重试");
+                    setResults((value) => updateResultAt(value, index, { status: "stopped", error: stoppedError.message, isRetrying: false }));
+                    throw stoppedError;
+                }
+                if (isRetryableGenerationError(error)) {
+                    attempt += 1;
+                    setResults((value) => updateResultAt(value, index, { status: "pending", retryCount: attempt, isRetrying: true, error: `服务波动，正在自动重试第 ${attempt} 次...` }));
+                    await sleep(RANDOM_PROMPT_RETRY_DELAY_MS);
+                    continue;
+                }
+                setResults((value) => updateResultAt(value, index, { status: "failed", error: error instanceof Error ? error.message : "生成失败", retryCount: attempt, isRetrying: false }));
+                throw error;
+            }
         }
+    };
+
+    const stopRetryResult = (resultId: string) => {
+        stoppedResultIdsRef.current.add(resultId);
     };
 
     const retryResult = (index: number) => {
         const snapshot = buildRequestSnapshot();
         if (!snapshot) return;
         setPreviewLog(null);
-        setResults((value) => updateResultAt(value, index, { status: "pending", error: undefined, image: undefined }));
-        void runGenerationSlot(index, snapshot).catch(() => {});
+        setResults((value) => {
+            const current = value[index];
+            if (!current) return value;
+            stoppedResultIdsRef.current.delete(current.id);
+            return updateResultAt(value, index, { status: "pending", error: undefined, image: undefined, retryCount: 0, isRetrying: false });
+        });
+        const resultId = results[index]?.id;
+        if (!resultId) return;
+        void runGenerationSlot(index, snapshot, resultId).catch(() => {});
     };
 
     return (
@@ -484,11 +548,11 @@ export default function ImagePage() {
                             <div className="grid gap-4 sm:grid-cols-2 2xl:grid-cols-3">
                                 {results.map((result, index) =>
                                     result.status === "success" && result.image ? (
-                                        <ResultImageCard key={result.id} image={result.image} index={index} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
-                                    ) : result.status === "failed" ? (
-                                        <FailedImageCard key={result.id} error={result.error || "生成失败"} onRetry={() => retryResult(index)} />
+                                        <ResultImageCard key={result.id} image={result.image} index={index} retryCount={result.retryCount} onEdit={addResultToReferences} onDownload={downloadImage} onSaveAsset={saveResultToAssets} />
+                                    ) : result.status === "failed" || result.status === "stopped" ? (
+                                        <FailedImageCard key={result.id} status={result.status} error={result.error || "生成失败"} retryCount={result.retryCount} onRetry={() => retryResult(index)} />
                                     ) : (
-                                        <PendingImageCard key={result.id} />
+                                        <PendingImageCard key={result.id} retryCount={result.retryCount} error={result.error} isRetrying={Boolean(result.isRetrying)} onStop={() => stopRetryResult(result.id)} />
                                     ),
                                 )}
                             </div>
@@ -556,12 +620,14 @@ function GenerationSettings({ config, model, updateConfig, openConfigDialog }: {
 function ResultImageCard({
     image,
     index,
+    retryCount,
     onEdit,
     onDownload,
     onSaveAsset,
 }: {
     image: GeneratedImage;
     index: number;
+    retryCount: number;
     onEdit: (image: GeneratedImage, index: number) => void;
     onDownload: (image: GeneratedImage, index: number) => void;
     onSaveAsset: (image: GeneratedImage, index: number) => void;
@@ -576,6 +642,7 @@ function ResultImageCard({
                     </span>
                     <span>{formatBytes(image.bytes)}</span>
                     <span>{formatDuration(image.durationMs)}</span>
+                    <span>重试 {retryCount} 次</span>
                 </div>
                 <div className="grid min-w-0 grid-cols-3 gap-2">
                     <Tooltip title="添加到素材">
@@ -599,7 +666,7 @@ function ResultImageCard({
     );
 }
 
-function PendingImageCard() {
+function PendingImageCard({ retryCount, error, isRetrying, onStop }: { retryCount: number; error?: string; isRetrying: boolean; onStop: () => void }) {
     return (
         <div className="relative aspect-square overflow-hidden rounded-lg border border-dashed border-stone-300 bg-stone-50 dark:border-stone-700 dark:bg-stone-900">
             <div
@@ -609,26 +676,35 @@ function PendingImageCard() {
                     backgroundSize: "16px 16px",
                 }}
             />
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-stone-500 dark:text-stone-400">
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-5 text-center text-sm text-stone-500 dark:text-stone-400">
                 <LoaderCircle className="size-6 animate-spin" />
-                <span>生成中</span>
+                <span>{isRetrying ? "自动重试中" : "生成中"}</span>
+                <span className="text-xs">已重试 {retryCount} 次</span>
+                {error ? <Typography.Paragraph ellipsis={{ rows: 3 }} className="!mb-0 !text-xs !text-stone-500 dark:!text-stone-400">{error}</Typography.Paragraph> : null}
+                {isRetrying ? (
+                    <Button size="small" danger onClick={onStop}>
+                        停止重试
+                    </Button>
+                ) : null}
             </div>
         </div>
     );
 }
 
-function FailedImageCard({ error, onRetry }: { error: string; onRetry: () => void }) {
+function FailedImageCard({ status, error, retryCount, onRetry }: { status: GenerationResult["status"]; error: string; retryCount: number; onRetry: () => void }) {
+    const stopped = status === "stopped";
     return (
-        <div className="overflow-hidden rounded-lg border border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20">
+        <div className={`overflow-hidden rounded-lg border ${stopped ? "border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950/20" : "border-red-200 bg-red-50 dark:border-red-950 dark:bg-red-950/20"}`}>
             <div className="flex aspect-square flex-col items-center justify-center gap-3 p-5 text-center">
-                <div className="text-sm font-medium text-red-600 dark:text-red-300">生成失败</div>
-                <Typography.Paragraph ellipsis={{ rows: 4 }} className="!mb-0 !text-xs !text-red-500 dark:!text-red-300">
+                <div className={`text-sm font-medium ${stopped ? "text-amber-700 dark:text-amber-300" : "text-red-600 dark:text-red-300"}`}>{stopped ? "已停止重试" : "生成失败"}</div>
+                <div className={`text-xs ${stopped ? "text-amber-600 dark:text-amber-400" : "text-red-500 dark:text-red-300"}`}>已重试 {retryCount} 次</div>
+                <Typography.Paragraph ellipsis={{ rows: 4 }} className={`!mb-0 !text-xs ${stopped ? "!text-amber-600 dark:!text-amber-300" : "!text-red-500 dark:!text-red-300"}`}>
                     {error}
                 </Typography.Paragraph>
             </div>
-            <div className="flex justify-end border-t border-red-200 p-3 dark:border-red-950">
-                <Button size="small" danger onClick={onRetry}>
-                    重试
+            <div className={`flex justify-end border-t p-3 ${stopped ? "border-amber-200 dark:border-amber-900" : "border-red-200 dark:border-red-950"}`}>
+                <Button size="small" danger={!stopped} onClick={onRetry}>
+                    重新生成
                 </Button>
             </div>
         </div>
